@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # Oracle Voice Chat Backend
+  voice-chat-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: oracle-voice-chat-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - TZ=Europe/Bratislava
+      # Deepgram API (ak máš skutočný kľúč)
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-mock}
+      # OpenAI API (ak máš skutočný kľúč)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-mock}
+      # Redis connection (voliteľné)
+      - REDIS_URL=redis://redis:6379
+      - USE_REDIS=${USE_REDIS:-false}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+      - ./tmp:/app/tmp
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - voice-chat-network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=false"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: oracle-voice-chat-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/ssl/cloudflare:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      voice-chat-backend:
+        condition: service_healthy
+    networks:
+      - voice-chat-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis pre session management
+  redis:
+    image: redis:7-alpine
+    container_name: oracle-voice-chat-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-oracleVoiceChat2024}
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - voice-chat-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Watchtower pre automatické updaty (voliteľné)
+  watchtower:
+    image: containrrr/watchtower
+    container_name: oracle-voice-chat-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_NOTIFICATIONS=email
+      - WATCHTOWER_NOTIFICATION_EMAIL_FROM=${WATCHTOWER_EMAIL_FROM:-admin@hotovo.ai}
+      - WATCHTOWER_NOTIFICATION_EMAIL_TO=${WATCHTOWER_EMAIL_TO:-admin@hotovo.ai}
+    command: oracle-voice-chat-backend oracle-voice-chat-nginx
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+networks:
+  voice-chat-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  redis-data:
+    driver: local
