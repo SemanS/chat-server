@@ -10,44 +10,45 @@ require('dotenv').config();
 
 // Import middleware
 const corsMiddleware = require('./middleware/cors');
-const sessionMiddleware = require('./middleware/session');
+const { sessionMiddleware } = require('./middleware/session');
 
 // Import routes
 const deepgramRoutes = require('./src/deepgram');
 const ttsRoutes = require('./src/tts');
+const chatRoutes = require('./src/chat');
 const metricsRoutes = require('./src/metrics');
 
 const app = express();
 const server = http.createServer(app);
 
 // WebSocket server
-const wss = new WebSocket.Server({ 
+const wss = new WebSocket.Server({
     server,
     path: '/ws'
 });
 
-// Basic middleware
-app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false
-}));
+// Basic middleware (helmet temporarily disabled for debugging)
+// app.use(helmet({
+//     contentSecurityPolicy: false,
+//     crossOriginEmbedderPolicy: false
+// }));
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Rate limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP, please try again later.'
-});
-app.use('/api/', limiter);
+// Rate limiting (temporarily disabled for debugging)
+// const limiter = rateLimit({
+//     windowMs: 15 * 60 * 1000, // 15 minutes
+//     max: 100, // limit each IP to 100 requests per windowMs
+//     message: 'Too many requests from this IP, please try again later.'
+// });
+// app.use('/api/', limiter);
 
-// CORS middleware
-app.use(corsMiddleware);
+// CORS middleware (temporarily disabled for debugging)
+// app.use(corsMiddleware);
 
-// Session middleware
-app.use(sessionMiddleware);
+// Session middleware (temporarily disabled for debugging)
+// app.use(sessionMiddleware);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -57,7 +58,19 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api/deepgram', deepgramRoutes);
 app.use('/api/tts', ttsRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/metrics', metricsRoutes);
+
+// Convenience endpoints for frontend compatibility
+app.post('/api/transcribe', (req, res, next) => {
+    req.url = '/transcribe';
+    deepgramRoutes(req, res, next);
+});
+
+app.post('/api/speak', (req, res, next) => {
+    req.url = '/synthesize';
+    ttsRoutes(req, res, next);
+});
 
 // WebSocket test page
 app.get('/websocket-test.html', (req, res) => {
@@ -206,44 +219,413 @@ app.get('/websocket-test.html', (req, res) => {
     `);
 });
 
+// WebSocket message handlers
+async function handleVoiceMessage(ws, audioBuffer, sessionId) {
+    try {
+        console.log(`🎤 Processing voice message: ${audioBuffer.length} bytes from session ${sessionId}`);
+
+        // Step 1: Transcribe audio using Deepgram
+        const multer = require('multer');
+        const upload = multer({ storage: multer.memoryStorage() });
+
+        // Create a mock request object for Deepgram
+        const mockReq = {
+            file: {
+                buffer: audioBuffer,
+                originalname: 'voice.webm',
+                mimetype: 'audio/webm',
+                size: audioBuffer.length
+            },
+            body: { language: 'sk-SK' }
+        };
+
+        // Call Deepgram transcription
+        const { createClient } = require('@deepgram/sdk');
+        let deepgram = null;
+        if (process.env.DEEPGRAM_API_KEY && process.env.DEEPGRAM_API_KEY !== 'mock') {
+            deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+        }
+
+        let transcript = '';
+
+        if (!deepgram) {
+            // Mock transcription
+            transcript = 'Toto je mock transkripcia hlasovej správy.';
+            console.log('🧪 Using mock Deepgram transcription');
+        } else {
+            // Real Deepgram API call
+            const options = {
+                model: 'nova-2',
+                language: 'sk-SK',
+                smart_format: true,
+                punctuate: true
+            };
+
+            const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
+                audioBuffer,
+                options
+            );
+
+            if (error) {
+                throw new Error(`Deepgram error: ${error.message}`);
+            }
+
+            transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+        }
+
+        console.log(`📝 Transcribed: "${transcript}"`);
+
+        if (!transcript || transcript.trim().length === 0) {
+            ws.send(JSON.stringify({
+                type: 'error',
+                message: 'No speech detected in audio',
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            }));
+            return;
+        }
+
+        // Send transcription to client
+        ws.send(JSON.stringify({
+            type: 'transcription',
+            transcript: transcript,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+
+        // Step 2: Get AI response using OpenAI
+        const OpenAI = require('openai');
+        let openai = null;
+        if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'mock') {
+            openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        }
+
+        let aiResponse = '';
+
+        if (!openai) {
+            // Mock AI response
+            aiResponse = `Rozumiem vašej správe: "${transcript}". Toto je mock odpoveď.`;
+            console.log('🧪 Using mock OpenAI response');
+        } else {
+            // Real OpenAI API call
+            const completion = await openai.chat.completions.create({
+                model: 'gpt-4',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'Si užitočný AI asistent. Odpovedaj v slovenčine, buď stručný a priateľský.'
+                    },
+                    {
+                        role: 'user',
+                        content: transcript
+                    }
+                ],
+                max_tokens: 500,
+                temperature: 0.7
+            });
+
+            aiResponse = completion.choices[0]?.message?.content || 'Prepáčte, nepodarilo sa mi vygenerovať odpoveď.';
+        }
+
+        console.log(`🤖 AI response: "${aiResponse}"`);
+
+        // Send AI response to client
+        ws.send(JSON.stringify({
+            type: 'ai_response',
+            message: aiResponse,
+            transcript: transcript,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+
+        // Step 3: Generate TTS audio
+        await generateAndSendTTS(ws, aiResponse, sessionId);
+
+    } catch (error) {
+        console.error(`❌ Voice message processing error for session ${sessionId}:`, error);
+
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Voice processing failed',
+            error: error.message,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+    }
+}
+
+async function handleVoiceChatMessage(ws, message, sessionId) {
+    try {
+        console.log(`💬 Voice chat message from ${sessionId}:`, message);
+
+        // This handles JSON voice chat messages (not binary audio)
+        if (message.message) {
+            // Process text message through AI
+            await handleTextChatMessage(ws, message, sessionId);
+        } else {
+            ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Voice chat message missing content',
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            }));
+        }
+
+    } catch (error) {
+        console.error(`❌ Voice chat message error for session ${sessionId}:`, error);
+
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Voice chat processing failed',
+            error: error.message,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+    }
+}
+
+async function handleTextChatMessage(ws, message, sessionId) {
+    try {
+        console.log(`💬 Text chat message from ${sessionId}:`, message.message);
+
+        // Get AI response using OpenAI
+        const OpenAI = require('openai');
+        let openai = null;
+        if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'mock') {
+            openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        }
+
+        let aiResponse = '';
+
+        if (!openai) {
+            // Mock AI response
+            aiResponse = `Rozumiem vašej správe: "${message.message}". Toto je mock odpoveď.`;
+            console.log('🧪 Using mock OpenAI response');
+        } else {
+            // Real OpenAI API call
+            const completion = await openai.chat.completions.create({
+                model: 'gpt-4',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'Si užitočný AI asistent. Odpovedaj v slovenčine, buď stručný a priateľský.'
+                    },
+                    {
+                        role: 'user',
+                        content: message.message
+                    }
+                ],
+                max_tokens: 500,
+                temperature: 0.7
+            });
+
+            aiResponse = completion.choices[0]?.message?.content || 'Prepáčte, nepodarilo sa mi vygenerovať odpoveď.';
+        }
+
+        console.log(`🤖 AI response: "${aiResponse}"`);
+
+        // Send AI response to client
+        ws.send(JSON.stringify({
+            type: 'ai_response',
+            message: aiResponse,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+
+    } catch (error) {
+        console.error(`❌ Text chat message error for session ${sessionId}:`, error);
+
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Text chat processing failed',
+            error: error.message,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+    }
+}
+
+async function generateAndSendTTS(ws, text, sessionId) {
+    try {
+        console.log(`🔊 Generating TTS for session ${sessionId}: "${text}"`);
+
+        // Generate TTS audio (mock or real)
+        let audioBuffer;
+
+        if (!process.env.PIPER_PATH) {
+            // Generate mock TTS audio
+            console.log('🧪 Using mock TTS audio');
+            audioBuffer = generateMockTTSAudio(text);
+        } else {
+            // Use real Piper TTS (would need to be implemented)
+            console.log('🔊 Using Piper TTS');
+            audioBuffer = generateMockTTSAudio(text); // Fallback for now
+        }
+
+        // Send audio as binary data
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(audioBuffer);
+            console.log(`🔊 Sent TTS audio: ${audioBuffer.length} bytes to session ${sessionId}`);
+        }
+
+    } catch (error) {
+        console.error(`❌ TTS generation error for session ${sessionId}:`, error);
+
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: 'TTS generation failed',
+            error: error.message,
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+        }));
+    }
+}
+
+function generateMockTTSAudio(text) {
+    // Create a simple WAV file with silence (same as in tts.js)
+    const sampleRate = 22050;
+    const duration = Math.max(1, Math.min(10, text.length * 0.1)); // 0.1s per character, max 10s
+    const numSamples = Math.floor(sampleRate * duration);
+    const numChannels = 1;
+    const bitsPerSample = 16;
+
+    // WAV header
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + numSamples * 2, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(sampleRate * numChannels * bitsPerSample / 8, 28);
+    header.writeUInt16LE(numChannels * bitsPerSample / 8, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(numSamples * 2, 40);
+
+    // Audio data (silence)
+    const audioData = Buffer.alloc(numSamples * 2);
+
+    return Buffer.concat([header, audioData]);
+}
+
 // WebSocket connection handling
 wss.on('connection', (ws, req) => {
     console.log('🔌 New WebSocket connection from:', req.socket.remoteAddress);
-    
-    // Send welcome message
+
+    // Generate unique session ID
+    const sessionId = 'ws_' + Math.random().toString(36).substr(2, 9);
+    ws.sessionId = sessionId;
+
+    // Track connection metrics
+    const { trackMetric } = require('./src/metrics');
+    trackMetric('websocket', 'connect', { sessionId });
+
+    // Send handshake message
     ws.send(JSON.stringify({
         type: 'connection',
+        sessionId: sessionId,
         message: 'Connected to Oracle Voice Chat Backend',
+        features: ['voice_chat', 'text_chat', 'ping_pong'],
         timestamp: new Date().toISOString()
     }));
-    
+
+    // Setup ping/pong for connection keepalive
+    const pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.ping();
+        }
+    }, 30000); // Ping every 30 seconds
+
+    ws.on('pong', () => {
+        console.log(`🏓 Pong received from session ${sessionId}`);
+    });
+
     // Handle messages
-    ws.on('message', (data) => {
+    ws.on('message', async (data) => {
         try {
+            trackMetric('websocket', 'message_received', { sessionId });
+
+            // Check if it's binary data (audio)
+            if (data instanceof Buffer) {
+                console.log(`🎵 Binary audio data received: ${data.length} bytes from session ${sessionId}`);
+                await handleVoiceMessage(ws, data, sessionId);
+                return;
+            }
+
+            // Handle text messages
             const message = data.toString();
-            console.log('📨 WebSocket message received:', message);
-            
-            // Echo message back
-            ws.send(JSON.stringify({
-                type: 'echo',
-                message: `Echo: ${message}`,
-                timestamp: new Date().toISOString()
-            }));
-            
+            console.log(`📨 WebSocket text message from ${sessionId}:`, message);
+
+            let parsedMessage;
+            try {
+                parsedMessage = JSON.parse(message);
+            } catch (e) {
+                // Handle plain text messages
+                parsedMessage = { type: 'text_chat', message: message };
+            }
+
+            switch (parsedMessage.type) {
+                case 'voice_chat':
+                    await handleVoiceChatMessage(ws, parsedMessage, sessionId);
+                    break;
+
+                case 'text_chat':
+                    await handleTextChatMessage(ws, parsedMessage, sessionId);
+                    break;
+
+                case 'ping':
+                    ws.send(JSON.stringify({
+                        type: 'pong',
+                        timestamp: new Date().toISOString()
+                    }));
+                    break;
+
+                case 'end_voice':
+                    console.log(`🔇 Voice session ended for ${sessionId}`);
+                    ws.send(JSON.stringify({
+                        type: 'voice_ended',
+                        sessionId: sessionId,
+                        timestamp: new Date().toISOString()
+                    }));
+                    break;
+
+                default:
+                    console.log(`❓ Unknown message type: ${parsedMessage.type}`);
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: `Unknown message type: ${parsedMessage.type}`,
+                        timestamp: new Date().toISOString()
+                    }));
+            }
+
         } catch (error) {
             console.error('❌ WebSocket message error:', error);
+            trackMetric('websocket', 'error', { sessionId, error: error.message });
+
             ws.send(JSON.stringify({
                 type: 'error',
                 message: 'Failed to process message',
                 error: error.message,
+                sessionId: sessionId,
                 timestamp: new Date().toISOString()
             }));
         }
     });
-    
+
     // Handle connection close
     ws.on('close', (code, reason) => {
-        console.log('🔌 WebSocket connection closed:', code, reason.toString());
+        console.log(`🔌 WebSocket connection closed: ${sessionId}, code: ${code}, reason: ${reason.toString()}`);
+        clearInterval(pingInterval);
+        trackMetric('websocket', 'disconnect', { sessionId, code });
+    });
+
+    // Handle errors
+    ws.on('error', (error) => {
+        console.error(`❌ WebSocket error for session ${sessionId}:`, error);
+        trackMetric('websocket', 'error', { sessionId, error: error.message });
     });
     
     // Handle errors
