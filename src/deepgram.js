@@ -75,8 +75,8 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
 
         // Configure transcription options
         const options = {
-            model: 'nova',
-            language: req.body.language || 'en-US',
+            model: 'nova-2',
+            detect_language: true,
             smart_format: true,
             punctuate: true,
             diarize: false,
