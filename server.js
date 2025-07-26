@@ -243,7 +243,7 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
                 mimetype: 'audio/webm',
                 size: audioBuffer.length
             },
-            body: { language: 'sk-SK' }
+            body: { language: 'en-US' }
         };
 
         // Call Deepgram transcription
@@ -262,8 +262,8 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
         } else {
             // Real Deepgram API call
             const options = {
-                model: 'nova-2',
-                language: 'sk-SK',
+                model: 'nova',
+                language: 'en-US',
                 smart_format: true,
                 punctuate: true
             };

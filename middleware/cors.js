@@ -12,6 +12,7 @@ const corsOptions = {
             'https://oracle-voice-chat.pages.dev',
             'https://c61dff04.oracle-voice-chat.pages.dev',
             'https://486b3cdb.oracle-voice-chat.pages.dev',
+            'https://e998aa5f.oracle-voice-chat.pages.dev',
             'https://voice-chat.vocabu.io',
             'https://chat.hotovo.ai',
             'https://voice-chat.hotovo.ai',
