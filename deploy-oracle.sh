@@ -106,6 +106,19 @@ fi
 echo "📁 Vytváram adresáre..."
 mkdir -p logs tmp ssl nginx/conf.d
 
+# Kopírovanie SSL certifikátov
+echo "🔐 Kopírujem SSL certifikáty..."
+mkdir -p ssl
+if [[ -f "origin-cert.pem" && -f "origin-cert.key" ]]; then
+    cp origin-cert.pem ssl/origin-cert.pem
+    cp origin-cert.key ssl/origin-cert.key
+    chmod 644 ssl/origin-cert.pem
+    chmod 600 ssl/origin-cert.key
+    echo "✅ SSL certifikáty skopírované do ssl/ adresára"
+else
+    echo "⚠️ SSL certifikáty nenájdené - používam self-signed certifikáty"
+fi
+
 # Vytvorenie základnej Nginx konfigurácie
 if [[ ! -f nginx/nginx.conf ]]; then
     echo "🌐 Vytváram Nginx konfiguráciu..."
@@ -186,9 +199,9 @@ server {
     listen 443 ssl http2;
     server_name _;
     
-    # SSL konfigurácia (self-signed pre začiatok)
-    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
-    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
+    # SSL konfigurácia (Cloudflare Origin Certificate)
+    ssl_certificate /etc/ssl/cloudflare/origin-cert.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/origin-cert.key;
     
     # Security headers
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
