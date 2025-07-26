@@ -67,41 +67,59 @@ async function generatePiperTTS(text, voice) {
             return;
         }
 
+        // Check if voice file exists
         const voiceFile = path.join(TTS_CONFIG.voicesPath, `${voice}.onnx`);
+        if (!require('fs').existsSync(voiceFile)) {
+            console.error(`❌ Voice file not found: ${voiceFile}`);
+            reject(new Error(`Voice file not found: ${voice}.onnx`));
+            return;
+        }
+
         const args = [
             '--model', voiceFile,
             '--output_file', '-', // Output to stdout
         ];
 
         console.log(`🔊 Generating Piper TTS: "${text}" with voice ${voice}`);
+        console.log(`🎤 Using voice file: ${voiceFile}`);
 
         const piper = spawn(TTS_CONFIG.piperPath, args);
         const audioChunks = [];
+        let errorOutput = '';
 
         piper.stdout.on('data', (chunk) => {
             audioChunks.push(chunk);
         });
 
         piper.stderr.on('data', (data) => {
-            console.error('Piper TTS error:', data.toString());
+            errorOutput += data.toString();
+            console.error('Piper TTS stderr:', data.toString());
         });
 
         piper.on('close', (code) => {
             if (code === 0) {
                 const audioBuffer = Buffer.concat(audioChunks);
+                console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of audio`);
                 resolve(audioBuffer);
             } else {
-                reject(new Error(`Piper TTS exited with code ${code}`));
+                console.error(`❌ Piper TTS exited with code ${code}, stderr: ${errorOutput}`);
+                reject(new Error(`Piper TTS exited with code ${code}: ${errorOutput}`));
             }
         });
 
         piper.on('error', (error) => {
+            console.error(`❌ Piper TTS spawn error:`, error);
             reject(error);
         });
 
         // Send text to Piper
-        piper.stdin.write(text);
-        piper.stdin.end();
+        try {
+            piper.stdin.write(text);
+            piper.stdin.end();
+        } catch (error) {
+            console.error(`❌ Error writing to Piper stdin:`, error);
+            reject(error);
+        }
     });
 }
 
@@ -132,8 +150,21 @@ function generateMockTTS(text, voice) {
     header.write('data', 36);
     header.writeUInt32LE(numSamples * 2, 40);
 
-    // Audio data (silence)
+    // Audio data (generate simple tone instead of silence)
     const audioData = Buffer.alloc(numSamples * 2);
+    const frequency = 440; // A4 note
+    const amplitude = 8000; // Volume level
+
+    for (let i = 0; i < numSamples; i++) {
+        // Generate sine wave
+        const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+        // Apply envelope to avoid clicks (fade in/out)
+        const envelope = Math.min(i / (sampleRate * 0.1), 1) * Math.min((numSamples - i) / (sampleRate * 0.1), 1);
+        const finalSample = Math.round(sample * envelope);
+
+        // Write 16-bit signed integer (little endian)
+        audioData.writeInt16LE(finalSample, i * 2);
+    }
 
     return Buffer.concat([header, audioData]);
 }

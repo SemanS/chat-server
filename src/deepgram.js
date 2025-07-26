@@ -76,12 +76,13 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
         // Configure transcription options
         const options = {
             model: 'nova-2',
-            detect_language: true,
+            language: 'sk-SK',
             smart_format: true,
             punctuate: true,
             diarize: false,
             utterances: false,
-            detect_language: false
+            encoding: 'webm',
+            sample_rate: 48000
         };
 
         console.log(`🔄 Sending ${audioBuffer.length} bytes to Deepgram with options:`, options);

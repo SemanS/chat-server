@@ -263,9 +263,11 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
             // Real Deepgram API call
             const options = {
                 model: 'nova-2',
-                detect_language: true,
+                language: 'sk-SK',
                 smart_format: true,
-                punctuate: true
+                punctuate: true,
+                encoding: 'webm',
+                sample_rate: 48000
             };
 
             const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
@@ -464,9 +466,14 @@ async function generateAndSendTTS(ws, text, sessionId) {
             console.log('🧪 Using mock TTS audio');
             audioBuffer = generateMockTTSAudio(text);
         } else {
-            // Use real Piper TTS (would need to be implemented)
+            // Use real Piper TTS
             console.log('🔊 Using Piper TTS');
-            audioBuffer = generateMockTTSAudio(text); // Fallback for now
+            try {
+                audioBuffer = await generatePiperTTSAudio(text);
+            } catch (error) {
+                console.error('❌ Piper TTS failed, falling back to mock:', error);
+                audioBuffer = generateMockTTSAudio(text);
+            }
         }
 
         // Send audio as binary data
@@ -512,10 +519,95 @@ function generateMockTTSAudio(text) {
     header.write('data', 36);
     header.writeUInt32LE(numSamples * 2, 40);
 
-    // Audio data (silence)
+    // Audio data (generate simple tone instead of silence)
     const audioData = Buffer.alloc(numSamples * 2);
+    const frequency = 440; // A4 note
+    const amplitude = 8000; // Volume level
+
+    for (let i = 0; i < numSamples; i++) {
+        // Generate sine wave
+        const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+        // Apply envelope to avoid clicks (fade in/out)
+        const envelope = Math.min(i / (sampleRate * 0.1), 1) * Math.min((numSamples - i) / (sampleRate * 0.1), 1);
+        const finalSample = Math.round(sample * envelope);
+
+        // Write 16-bit signed integer (little endian)
+        audioData.writeInt16LE(finalSample, i * 2);
+    }
 
     return Buffer.concat([header, audioData]);
+}
+
+// Generate TTS using Piper (real implementation)
+async function generatePiperTTSAudio(text) {
+    const { spawn } = require('child_process');
+    const path = require('path');
+    const fs = require('fs');
+
+    return new Promise((resolve, reject) => {
+        const piperPath = process.env.PIPER_PATH;
+        const voicesPath = process.env.PIPER_VOICES_PATH || '/app/voices';
+        const voiceName = process.env.TTS_VOICE || 'sk_SK-lili-medium';
+
+        if (!piperPath) {
+            reject(new Error('PIPER_PATH not configured'));
+            return;
+        }
+
+        // Check if voice file exists
+        const voiceFile = path.join(voicesPath, `${voiceName}.onnx`);
+        if (!fs.existsSync(voiceFile)) {
+            console.error(`❌ Voice file not found: ${voiceFile}`);
+            reject(new Error(`Voice file not found: ${voiceName}.onnx`));
+            return;
+        }
+
+        const args = [
+            '--model', voiceFile,
+            '--output_file', '-', // Output to stdout
+        ];
+
+        console.log(`🔊 Generating Piper TTS: "${text}" with voice ${voiceName}`);
+        console.log(`🎤 Using voice file: ${voiceFile}`);
+
+        const piper = spawn(piperPath, args);
+        const audioChunks = [];
+        let errorOutput = '';
+
+        piper.stdout.on('data', (chunk) => {
+            audioChunks.push(chunk);
+        });
+
+        piper.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+            console.error('Piper TTS stderr:', data.toString());
+        });
+
+        piper.on('close', (code) => {
+            if (code === 0) {
+                const audioBuffer = Buffer.concat(audioChunks);
+                console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of audio`);
+                resolve(audioBuffer);
+            } else {
+                console.error(`❌ Piper TTS exited with code ${code}, stderr: ${errorOutput}`);
+                reject(new Error(`Piper TTS exited with code ${code}: ${errorOutput}`));
+            }
+        });
+
+        piper.on('error', (error) => {
+            console.error(`❌ Piper TTS spawn error:`, error);
+            reject(error);
+        });
+
+        // Send text to Piper
+        try {
+            piper.stdin.write(text);
+            piper.stdin.end();
+        } catch (error) {
+            console.error(`❌ Error writing to Piper stdin:`, error);
+            reject(error);
+        }
+    });
 }
 
 // WebSocket connection handling
