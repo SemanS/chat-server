@@ -61,7 +61,7 @@ async function cacheAudio(cacheKey, audioBuffer) {
 
 // Generate TTS using Piper (if available)
 async function generatePiperTTS(text, voice) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         if (!TTS_CONFIG.piperPath) {
             reject(new Error('Piper TTS not configured'));
             return;
@@ -75,40 +75,65 @@ async function generatePiperTTS(text, voice) {
             return;
         }
 
+        // Create temporary file for WAV output
+        const tmpFile = path.join(require('os').tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.wav`);
+
         const args = [
             '--model', voiceFile,
-            '--output_file', '-', // Output to stdout
+            '--output_file', tmpFile, // Output to temporary WAV file instead of stdout
         ];
 
         console.log(`🔊 Generating Piper TTS: "${text}" with voice ${voice}`);
         console.log(`🎤 Using voice file: ${voiceFile}`);
+        console.log(`📁 Output file: ${tmpFile}`);
 
         const piper = spawn(TTS_CONFIG.piperPath, args);
-        const audioChunks = [];
         let errorOutput = '';
-
-        piper.stdout.on('data', (chunk) => {
-            audioChunks.push(chunk);
-        });
 
         piper.stderr.on('data', (data) => {
             errorOutput += data.toString();
             console.error('Piper TTS stderr:', data.toString());
         });
 
-        piper.on('close', (code) => {
+        piper.on('close', async (code) => {
             if (code === 0) {
-                const audioBuffer = Buffer.concat(audioChunks);
-                console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of audio`);
-                resolve(audioBuffer);
+                try {
+                    // Read the generated WAV file
+                    const audioBuffer = await fs.readFile(tmpFile);
+                    console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of WAV audio`);
+
+                    // Clean up temporary file
+                    try {
+                        await fs.unlink(tmpFile);
+                    } catch (cleanupError) {
+                        console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+                    }
+
+                    resolve(audioBuffer);
+                } catch (readError) {
+                    console.error(`❌ Error reading generated audio file ${tmpFile}:`, readError);
+                    reject(new Error(`Failed to read generated audio: ${readError.message}`));
+                }
             } else {
                 console.error(`❌ Piper TTS exited with code ${code}, stderr: ${errorOutput}`);
+                // Clean up temporary file on error
+                try {
+                    await fs.unlink(tmpFile);
+                } catch (cleanupError) {
+                    console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+                }
                 reject(new Error(`Piper TTS exited with code ${code}: ${errorOutput}`));
             }
         });
 
-        piper.on('error', (error) => {
+        piper.on('error', async (error) => {
             console.error(`❌ Piper TTS spawn error:`, error);
+            // Clean up temporary file on error
+            try {
+                await fs.unlink(tmpFile);
+            } catch (cleanupError) {
+                console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+            }
             reject(error);
         });
 
@@ -118,6 +143,12 @@ async function generatePiperTTS(text, voice) {
             piper.stdin.end();
         } catch (error) {
             console.error(`❌ Error writing to Piper stdin:`, error);
+            // Clean up temporary file on error
+            try {
+                await fs.unlink(tmpFile);
+            } catch (cleanupError) {
+                console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+            }
             reject(error);
         }
     });

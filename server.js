@@ -260,14 +260,21 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
             transcript = 'Toto je mock transkripcia hlasovej správy.';
             console.log('🧪 Using mock Deepgram transcription');
         } else {
-            // Real Deepgram API call
+            // Real Deepgram API call - optimized for Opus/WebM
             const options = {
                 model: 'nova-2',
-                language: 'sk-SK',
-                smart_format: true,
+                language: 'sk',            // Slovak language code for nova-2 model
                 punctuate: true,
-                encoding: 'webm',
-                sample_rate: 48000
+                smart_format: true,
+                // Noise filtering parameters
+                filler_words: false,       // Remove filler words (um, uh, etc.)
+                numerals: true,           // Convert numbers to numerals
+                // Enhanced speech detection
+                detect_language: false,    // Don't auto-detect, use sk
+                detect_topics: false,     // Don't detect topics
+                summarize: false
+                // encoding and sample_rate are auto-detected from Opus/WebM format
+                // DO NOT specify encoding or sample_rate for Opus - causes Chinese characters
             };
 
             const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
@@ -458,22 +465,22 @@ async function generateAndSendTTS(ws, text, sessionId) {
     try {
         console.log(`🔊 Generating TTS for session ${sessionId}: "${text}"`);
 
-        // Generate TTS audio (mock or real)
-        let audioBuffer;
-
         if (!process.env.PIPER_PATH) {
-            // Generate mock TTS audio
-            console.log('🧪 Using mock TTS audio');
-            audioBuffer = generateMockTTSAudio(text);
-        } else {
-            // Use real Piper TTS
-            console.log('🔊 Using Piper TTS');
-            try {
-                audioBuffer = await generatePiperTTSAudio(text);
-            } catch (error) {
-                console.error('❌ Piper TTS failed, falling back to mock:', error);
-                audioBuffer = generateMockTTSAudio(text);
-            }
+            // Ak Piper nie je dostupný, nechaj frontend použiť Web Speech API
+            console.log('🧪 Piper nie je dostupný - frontend použije Web Speech API');
+            // ai_response správa už bola poslaná, frontend ju spracuje s Web Speech API
+            return;
+        }
+
+        // Use real Piper TTS
+        console.log('🔊 Using Piper TTS');
+        let audioBuffer;
+        try {
+            audioBuffer = await generatePiperTTSAudio(text);
+        } catch (error) {
+            console.error('❌ Piper TTS failed, frontend použije Web Speech API fallback:', error);
+            // Neposielame mock audio, nechaj frontend použiť Web Speech API
+            return;
         }
 
         // Send audio as binary data
@@ -542,9 +549,11 @@ function generateMockTTSAudio(text) {
 async function generatePiperTTSAudio(text) {
     const { spawn } = require('child_process');
     const path = require('path');
-    const fs = require('fs');
+    const fs = require('fs').promises;
+    const fsSync = require('fs');
+    const os = require('os');
 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         const piperPath = process.env.PIPER_PATH;
         const voicesPath = process.env.PIPER_VOICES_PATH || '/app/voices';
         const voiceName = process.env.TTS_VOICE || 'sk_SK-lili-medium';
@@ -556,46 +565,71 @@ async function generatePiperTTSAudio(text) {
 
         // Check if voice file exists
         const voiceFile = path.join(voicesPath, `${voiceName}.onnx`);
-        if (!fs.existsSync(voiceFile)) {
+        if (!fsSync.existsSync(voiceFile)) {
             console.error(`❌ Voice file not found: ${voiceFile}`);
             reject(new Error(`Voice file not found: ${voiceName}.onnx`));
             return;
         }
 
+        // Create temporary file for WAV output
+        const tmpFile = path.join(os.tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.wav`);
+
         const args = [
             '--model', voiceFile,
-            '--output_file', '-', // Output to stdout
+            '--output_file', tmpFile, // Output to temporary WAV file instead of stdout
         ];
 
         console.log(`🔊 Generating Piper TTS: "${text}" with voice ${voiceName}`);
         console.log(`🎤 Using voice file: ${voiceFile}`);
+        console.log(`📁 Output file: ${tmpFile}`);
 
         const piper = spawn(piperPath, args);
-        const audioChunks = [];
         let errorOutput = '';
-
-        piper.stdout.on('data', (chunk) => {
-            audioChunks.push(chunk);
-        });
 
         piper.stderr.on('data', (data) => {
             errorOutput += data.toString();
             console.error('Piper TTS stderr:', data.toString());
         });
 
-        piper.on('close', (code) => {
+        piper.on('close', async (code) => {
             if (code === 0) {
-                const audioBuffer = Buffer.concat(audioChunks);
-                console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of audio`);
-                resolve(audioBuffer);
+                try {
+                    // Read the generated WAV file
+                    const audioBuffer = await fs.readFile(tmpFile);
+                    console.log(`✅ Piper TTS generated ${audioBuffer.length} bytes of WAV audio`);
+
+                    // Clean up temporary file
+                    try {
+                        await fs.unlink(tmpFile);
+                    } catch (cleanupError) {
+                        console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+                    }
+
+                    resolve(audioBuffer);
+                } catch (readError) {
+                    console.error(`❌ Error reading generated audio file ${tmpFile}:`, readError);
+                    reject(new Error(`Failed to read generated audio: ${readError.message}`));
+                }
             } else {
                 console.error(`❌ Piper TTS exited with code ${code}, stderr: ${errorOutput}`);
+                // Clean up temporary file on error
+                try {
+                    await fs.unlink(tmpFile);
+                } catch (cleanupError) {
+                    console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+                }
                 reject(new Error(`Piper TTS exited with code ${code}: ${errorOutput}`));
             }
         });
 
-        piper.on('error', (error) => {
+        piper.on('error', async (error) => {
             console.error(`❌ Piper TTS spawn error:`, error);
+            // Clean up temporary file on error
+            try {
+                await fs.unlink(tmpFile);
+            } catch (cleanupError) {
+                console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+            }
             reject(error);
         });
 
@@ -605,6 +639,12 @@ async function generatePiperTTSAudio(text) {
             piper.stdin.end();
         } catch (error) {
             console.error(`❌ Error writing to Piper stdin:`, error);
+            // Clean up temporary file on error
+            try {
+                await fs.unlink(tmpFile);
+            } catch (cleanupError) {
+                console.warn(`⚠️ Could not delete temp file ${tmpFile}:`, cleanupError.message);
+            }
             reject(error);
         }
     });

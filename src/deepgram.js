@@ -63,7 +63,7 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
             return res.json({
                 transcript: mockTranscript,
                 confidence: 0.95,
-                language: 'sk-SK',
+                language: 'sk',
                 duration: duration,
                 mock: true,
                 timestamp: new Date().toISOString()
@@ -73,16 +73,21 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
         // Real Deepgram API call
         const audioBuffer = req.file.buffer;
 
-        // Configure transcription options
+        // Configure transcription options for Opus/WebM
         const options = {
             model: 'nova-2',
-            language: 'sk-SK',
-            smart_format: true,
+            language: 'sk',            // Slovak language code for nova-2 model
             punctuate: true,
-            diarize: false,
-            utterances: false,
-            encoding: 'webm',
-            sample_rate: 48000
+            smart_format: true,
+            // Noise filtering parameters
+            filler_words: false,       // Remove filler words (um, uh, etc.)
+            numerals: true,           // Convert numbers to numerals
+            // Enhanced speech detection
+            detect_language: false,    // Don't auto-detect, use sk
+            detect_topics: false,     // Don't detect topics
+            summarize: false
+            // encoding and sample_rate are auto-detected from Opus/WebM format
+            // DO NOT specify encoding or sample_rate for Opus - causes Chinese characters
         };
 
         console.log(`🔄 Sending ${audioBuffer.length} bytes to Deepgram with options:`, options);
