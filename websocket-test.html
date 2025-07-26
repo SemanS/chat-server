@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket TTS Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.connected { background-color: #d4edda; color: #155724; }
+        .status.disconnected { background-color: #f8d7da; color: #721c24; }
+        .status.error { background-color: #fff3cd; color: #856404; }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        input[type="text"] {
+            width: 300px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .audio-controls {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔊 WebSocket TTS Test</h1>
+        <p>Test pre diagnostiku TTS problémov cez WebSocket</p>
+        
+        <div id="status" class="status disconnected">❌ Nepripojený</div>
+        
+        <div class="controls">
+            <input type="text" id="serverUrl" value="ws://129.159.9.170:3000/ws" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="connect()">Pripojiť</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Odpojiť</button>
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="testMessage" value="Ahoj, toto je test TTS správy." placeholder="Test správa">
+            <button id="sendBtn" onclick="sendTestMessage()" disabled>Pošli TTS test</button>
+        </div>
+        
+        <div class="audio-controls">
+            <button id="clearLogBtn" onclick="clearLog()">Vyčisti log</button>
+            <button id="testAudioBtn" onclick="testAudioPlayback()">Test audio prehrávanie</button>
+        </div>
+        
+        <h3>📋 Log správ:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        
+        const elements = {
+            status: document.getElementById('status'),
+            connectBtn: document.getElementById('connectBtn'),
+            disconnectBtn: document.getElementById('disconnectBtn'),
+            sendBtn: document.getElementById('sendBtn'),
+            serverUrl: document.getElementById('serverUrl'),
+            testMessage: document.getElementById('testMessage'),
+            log: document.getElementById('log')
+        };
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'audio' ? '🔊' : '📝';
+            elements.log.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            elements.log.scrollTop = elements.log.scrollHeight;
+        }
+        
+        function updateStatus(message, type) {
+            elements.status.textContent = message;
+            elements.status.className = `status ${type}`;
+        }
+        
+        function connect() {
+            const url = elements.serverUrl.value;
+            log(`Pripájam sa na: ${url}`);
+            
+            try {
+                ws = new WebSocket(url);
+                
+                // DÔLEŽITÉ: Nastavenie pre binárne dáta
+                ws.binaryType = 'arraybuffer';
+                
+                ws.onopen = () => {
+                    log('WebSocket pripojený!', 'success');
+                    updateStatus('✅ Pripojený', 'connected');
+                    isConnected = true;
+                    
+                    elements.connectBtn.disabled = true;
+                    elements.disconnectBtn.disabled = false;
+                    elements.sendBtn.disabled = false;
+                };
+                
+                ws.onmessage = (event) => {
+                    if (typeof event.data === 'string') {
+                        // JSON správa
+                        log(`JSON správa: ${event.data}`);
+                        try {
+                            const data = JSON.parse(event.data);
+                            handleJsonMessage(data);
+                        } catch (error) {
+                            log(`Chyba parsingu JSON: ${error.message}`, 'error');
+                        }
+                    } else {
+                        // Binárne audio dáta
+                        log(`Binárne dáta: ${event.data.byteLength} bajtov`, 'audio');
+                        handleAudioData(event.data);
+                    }
+                };
+                
+                ws.onclose = (event) => {
+                    log(`WebSocket zatvorený: ${event.code} - ${event.reason}`);
+                    updateStatus('❌ Odpojený', 'disconnected');
+                    isConnected = false;
+                    
+                    elements.connectBtn.disabled = false;
+                    elements.disconnectBtn.disabled = true;
+                    elements.sendBtn.disabled = true;
+                };
+                
+                ws.onerror = (error) => {
+                    log(`WebSocket chyba: ${error}`, 'error');
+                    updateStatus('❌ Chyba pripojenia', 'error');
+                };
+                
+            } catch (error) {
+                log(`Chyba vytvorenia WebSocket: ${error.message}`, 'error');
+                updateStatus('❌ Chyba pripojenia', 'error');
+            }
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function sendTestMessage() {
+            if (!ws || !isConnected) {
+                log('WebSocket nie je pripojený!', 'error');
+                return;
+            }
+            
+            const message = elements.testMessage.value;
+            if (!message.trim()) {
+                log('Prázdna správa!', 'error');
+                return;
+            }
+            
+            const payload = {
+                type: 'voice_chat',
+                message: message,
+                language: 'sk',
+                timestamp: new Date().toISOString()
+            };
+            
+            log(`Posielam: ${JSON.stringify(payload)}`);
+            ws.send(JSON.stringify(payload));
+        }
+        
+        function handleJsonMessage(data) {
+            switch (data.type) {
+                case 'connection':
+                    log(`Pripojený so session ID: ${data.sessionId}`, 'success');
+                    break;
+                case 'ai_response':
+                    log(`AI odpoveď: "${data.message}"`, 'success');
+                    break;
+                case 'error':
+                    log(`Server chyba: ${data.message}`, 'error');
+                    break;
+                default:
+                    log(`Neznámy typ správy: ${data.type}`);
+            }
+        }
+        
+        function handleAudioData(audioBuffer) {
+            try {
+                log(`Spracovávam TTS audio: ${audioBuffer.byteLength} bajtov`, 'audio');
+                
+                // Konvertuj ArrayBuffer na Blob
+                const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                // Vytvor a prehraj audio
+                const audio = new Audio(audioUrl);
+                
+                audio.onloadeddata = () => {
+                    log(`Audio načítané, dĺžka: ${audio.duration.toFixed(2)}s`, 'audio');
+                };
+                
+                audio.onplay = () => {
+                    log('Audio sa začalo prehrávať', 'audio');
+                };
+                
+                audio.onended = () => {
+                    log('Audio prehrávanie skončilo', 'audio');
+                    URL.revokeObjectURL(audioUrl);
+                };
+                
+                audio.onerror = (error) => {
+                    log(`Chyba prehrávania audio: ${error}`, 'error');
+                    URL.revokeObjectURL(audioUrl);
+                };
+                
+                // Prehraj audio
+                audio.play().catch(error => {
+                    log(`Chyba spustenia audio: ${error.message}`, 'error');
+                });
+                
+            } catch (error) {
+                log(`Chyba spracovania audio dát: ${error.message}`, 'error');
+            }
+        }
+        
+        function clearLog() {
+            elements.log.textContent = '';
+        }
+        
+        function testAudioPlayback() {
+            // Test s jednoduchým tónom
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 440; // A4
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+            
+            log('Test audio prehrávanie (440Hz tón)', 'audio');
+        }
+        
+        // Auto-pripojenie pri načítaní stránky
+        window.onload = () => {
+            log('WebSocket TTS Test načítaný');
+            log('1. Klikni "Pripojiť" pre pripojenie na WebSocket');
+            log('2. Napíš test správu a klikni "Pošli TTS test"');
+            log('3. Sleduj log pre JSON správy a binárne audio dáta');
+            log('4. Audio by sa malo automaticky prehrať');
+        };
+    </script>
+</body>
+</html>

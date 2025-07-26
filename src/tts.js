@@ -12,7 +12,7 @@ const TTS_CONFIG = {
     // In production, you would install Piper TTS binary
     piperPath: process.env.PIPER_PATH || null,
     voicesPath: process.env.PIPER_VOICES_PATH || './voices',
-    defaultVoice: process.env.TTS_VOICE || 'sk-SK-female',
+    defaultVoice: process.env.TTS_VOICE || 'sk_SK-lili-medium', // Zjednotené s server.js
     cacheEnabled: process.env.TTS_CACHE_ENABLED === 'true',
     cacheDir: './tmp/tts_cache',
     maxCacheSize: 100 * 1024 * 1024, // 100MB
@@ -285,35 +285,35 @@ router.post('/synthesize', async (req, res) => {
 router.get('/voices', (req, res) => {
     const availableVoices = [
         {
-            id: 'sk-SK-female',
-            name: 'Slovak Female',
+            id: 'sk_SK-lili-medium',
+            name: 'Slovak Female (Lili)',
             language: 'sk-SK',
             gender: 'female',
-            description: 'Standard Slovak female voice',
+            description: 'High-quality Slovak female voice using Piper TTS',
             recommended: true
         },
         {
-            id: 'sk-SK-male',
+            id: 'sk_SK-male-medium',
             name: 'Slovak Male',
             language: 'sk-SK',
             gender: 'male',
-            description: 'Standard Slovak male voice',
+            description: 'Slovak male voice using Piper TTS',
             recommended: false
         },
         {
-            id: 'en-US-female',
+            id: 'en_US-female-medium',
             name: 'English US Female',
             language: 'en-US',
             gender: 'female',
-            description: 'Standard US English female voice',
+            description: 'US English female voice using Piper TTS',
             recommended: false
         },
         {
-            id: 'en-US-male',
+            id: 'en_US-male-medium',
             name: 'English US Male',
             language: 'en-US',
             gender: 'male',
-            description: 'Standard US English male voice',
+            description: 'US English male voice using Piper TTS',
             recommended: false
         }
     ];

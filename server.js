@@ -263,18 +263,13 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
             // Real Deepgram API call - optimized for Opus/WebM
             const options = {
                 model: 'nova-2',
-                language: 'sk',            // Slovak language code for nova-2 model
+                language: 'sk',         // Correct Slovak language code for nova-2 model
                 punctuate: true,
                 smart_format: true,
-                // Noise filtering parameters
-                filler_words: false,       // Remove filler words (um, uh, etc.)
-                numerals: true,           // Convert numbers to numerals
-                // Enhanced speech detection
-                detect_language: false,    // Don't auto-detect, use sk
-                detect_topics: false,     // Don't detect topics
-                summarize: false
-                // encoding and sample_rate are auto-detected from Opus/WebM format
-                // DO NOT specify encoding or sample_rate for Opus - causes Chinese characters
+                // Minimálne parametre pre WebM/Opus - nechaj Deepgram autodetegovať formát
+                detect_language: false     // Nedeteguj jazyk, použij sk-SK
+                // NEPOUŽÍVAJ encoding, sample_rate, filler_words, numerals, detect_topics, summarize
+                // pre WebM/Opus - spôsobuje "corrupt data" chyby
             };
 
             const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
