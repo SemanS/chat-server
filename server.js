@@ -557,7 +557,13 @@ wss.on('connection', (ws, req) => {
     // Handle messages
     ws.on('message', async (data) => {
         try {
-            trackMetric('websocket', 'message_received', { sessionId });
+            // Track message metrics (safe import)
+            try {
+                const { trackMetric } = require('./src/metrics');
+                trackMetric('websocket', 'message_received', { sessionId });
+            } catch (error) {
+                console.log('📊 Metrics tracking not available:', error.message);
+            }
 
             // Check if it's binary data (audio)
             if (data instanceof Buffer) {
@@ -614,7 +620,13 @@ wss.on('connection', (ws, req) => {
 
         } catch (error) {
             console.error('❌ WebSocket message error:', error);
-            trackMetric('websocket', 'error', { sessionId, error: error.message });
+            // Track error metrics (safe import)
+            try {
+                const { trackMetric } = require('./src/metrics');
+                trackMetric('websocket', 'error', { sessionId, error: error.message });
+            } catch (metricsError) {
+                console.log('📊 Metrics tracking not available:', metricsError.message);
+            }
 
             ws.send(JSON.stringify({
                 type: 'error',
@@ -641,7 +653,13 @@ wss.on('connection', (ws, req) => {
     // Handle errors
     ws.on('error', (error) => {
         console.error(`❌ WebSocket error for session ${sessionId}:`, error);
-        trackMetric('websocket', 'error', { sessionId, error: error.message });
+        // Track error metrics (safe import)
+        try {
+            const { trackMetric } = require('./src/metrics');
+            trackMetric('websocket', 'error', { sessionId, error: error.message });
+        } catch (metricsError) {
+            console.log('📊 Metrics tracking not available:', metricsError.message);
+        }
     });
     
     // Handle errors
