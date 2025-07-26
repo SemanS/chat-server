@@ -54,6 +54,54 @@ function trackRequest(endpoint) {
     };
 }
 
+// Function to track various metrics
+function trackMetric(category, action, data = {}) {
+    try {
+        switch (category) {
+            case 'websocket':
+                switch (action) {
+                    case 'connect':
+                        systemMetrics.websocket.connections++;
+                        systemMetrics.websocket.activeConnections++;
+                        console.log(`📊 WebSocket connected: ${data.sessionId}, active: ${systemMetrics.websocket.activeConnections}`);
+                        break;
+                    case 'disconnect':
+                        systemMetrics.websocket.activeConnections = Math.max(0, systemMetrics.websocket.activeConnections - 1);
+                        console.log(`📊 WebSocket disconnected: ${data.sessionId}, active: ${systemMetrics.websocket.activeConnections}`);
+                        break;
+                    case 'message_received':
+                        systemMetrics.websocket.messagesReceived++;
+                        break;
+                    case 'message_sent':
+                        systemMetrics.websocket.messagesSent++;
+                        break;
+                    case 'error':
+                        console.log(`📊 WebSocket error: ${data.sessionId} - ${data.error}`);
+                        break;
+                }
+                break;
+            case 'deepgram':
+                if (action === 'request') {
+                    systemMetrics.deepgram.requests++;
+                    if (data.duration) {
+                        systemMetrics.deepgram.totalDuration += data.duration;
+                    }
+                }
+                break;
+            case 'tts':
+                if (action === 'request') {
+                    systemMetrics.tts.requests++;
+                    if (data.characters) {
+                        systemMetrics.tts.totalCharacters += data.characters;
+                    }
+                }
+                break;
+        }
+    } catch (error) {
+        console.error('❌ Error tracking metric:', error);
+    }
+}
+
 // GET /api/metrics
 router.get('/', (req, res) => {
     const sessionStats = getSessionStats();
@@ -214,4 +262,5 @@ function formatUptime(uptime) {
 // Export pre použitie v iných moduloch
 module.exports = router;
 module.exports.trackRequest = trackRequest;
+module.exports.trackMetric = trackMetric;
 module.exports.systemMetrics = systemMetrics;

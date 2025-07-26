@@ -10,6 +10,8 @@ const corsOptions = {
             'http://127.0.0.1:3000',
             'http://127.0.0.1:8000',
             'https://oracle-voice-chat.pages.dev',
+            'https://c61dff04.oracle-voice-chat.pages.dev',
+            'https://voice-chat.vocabu.io',
             'https://chat.hotovo.ai',
             'https://voice-chat.hotovo.ai',
             // Cloudflare Pages preview URLs

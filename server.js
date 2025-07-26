@@ -44,14 +44,21 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // });
 // app.use('/api/', limiter);
 
-// CORS middleware (temporarily disabled for debugging)
-// app.use(corsMiddleware);
+// CORS middleware
+app.use(corsMiddleware);
 
 // Session middleware (temporarily disabled for debugging)
 // app.use(sessionMiddleware);
 
+// Debug middleware
+app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.url} from ${req.ip}`);
+    next();
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
+    console.log('💚 Health check requested');
     res.status(200).send('OK');
 });
 
@@ -519,9 +526,13 @@ wss.on('connection', (ws, req) => {
     const sessionId = 'ws_' + Math.random().toString(36).substr(2, 9);
     ws.sessionId = sessionId;
 
-    // Track connection metrics
-    const { trackMetric } = require('./src/metrics');
-    trackMetric('websocket', 'connect', { sessionId });
+    // Track connection metrics (safe import)
+    try {
+        const { trackMetric } = require('./src/metrics');
+        trackMetric('websocket', 'connect', { sessionId });
+    } catch (error) {
+        console.log('📊 Metrics tracking not available:', error.message);
+    }
 
     // Send handshake message
     ws.send(JSON.stringify({
@@ -619,7 +630,12 @@ wss.on('connection', (ws, req) => {
     ws.on('close', (code, reason) => {
         console.log(`🔌 WebSocket connection closed: ${sessionId}, code: ${code}, reason: ${reason.toString()}`);
         clearInterval(pingInterval);
-        trackMetric('websocket', 'disconnect', { sessionId, code });
+        try {
+            const { trackMetric } = require('./src/metrics');
+            trackMetric('websocket', 'disconnect', { sessionId, code });
+        } catch (error) {
+            console.log('📊 Metrics tracking not available:', error.message);
+        }
     });
 
     // Handle errors
