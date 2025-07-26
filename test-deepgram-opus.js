@@ -42,12 +42,9 @@ async function testDeepgramOpus() {
             language: 'sk',            // Slovak language code for nova-2 model
             punctuate: true,
             smart_format: true,
-            filler_words: false,
-            numerals: true,
-            detect_language: false,    // Don't auto-detect, use sk
-            detect_topics: false,
-            summarize: false
-            // NO encoding or sample_rate - let Deepgram auto-detect from Opus/WebM
+            detect_language: false     // Don't auto-detect, use sk
+            // NO encoding, sample_rate, filler_words, numerals, detect_topics, summarize
+            // for WebM/Opus - causes "corrupt data" errors
         };
         
         console.log(`🔧 Using corrected options:`, JSON.stringify(options, null, 2));

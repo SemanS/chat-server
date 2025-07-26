@@ -137,9 +137,9 @@ async function generatePiperTTS(text, voice) {
             reject(error);
         });
 
-        // Send text to Piper
+        // Send text to Piper with proper encoding
         try {
-            piper.stdin.write(text);
+            piper.stdin.write(text + '\n', 'utf8');
             piper.stdin.end();
         } catch (error) {
             console.error(`❌ Error writing to Piper stdin:`, error);
@@ -158,9 +158,9 @@ async function generatePiperTTS(text, voice) {
 function generateMockTTS(text, voice) {
     console.log(`🧪 Generating mock TTS for: "${text}" with voice ${voice}`);
 
-    // Create a simple WAV file with silence
+    // Create a simple WAV file with audible tone (not silence)
     const sampleRate = 22050;
-    const duration = Math.max(1, Math.min(10, text.length * 0.1)); // 0.1s per character, max 10s
+    const duration = Math.max(2, Math.min(10, text.length * 0.15)); // 0.15s per character, min 2s, max 10s
     const numSamples = Math.floor(sampleRate * duration);
     const numChannels = 1;
     const bitsPerSample = 16;
@@ -181,10 +181,10 @@ function generateMockTTS(text, voice) {
     header.write('data', 36);
     header.writeUInt32LE(numSamples * 2, 40);
 
-    // Audio data (generate simple tone instead of silence)
+    // Audio data (generate clearly audible tone)
     const audioData = Buffer.alloc(numSamples * 2);
     const frequency = 440; // A4 note
-    const amplitude = 8000; // Volume level
+    const amplitude = 16000; // Increased volume level for better audibility
 
     for (let i = 0; i < numSamples; i++) {
         // Generate sine wave

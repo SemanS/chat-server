@@ -231,6 +231,15 @@ async function handleVoiceMessage(ws, audioBuffer, sessionId) {
     try {
         console.log(`🎤 Processing voice message: ${audioBuffer.length} bytes from session ${sessionId}`);
 
+        // Debug: Check audio buffer properties
+        if (audioBuffer.length < 1000) {
+            console.warn(`⚠️ Audio buffer is very small: ${audioBuffer.length} bytes - may be incomplete`);
+        }
+
+        // Debug: Log first few bytes to check format
+        const firstBytes = Array.from(audioBuffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`🔍 Audio buffer first 16 bytes: ${firstBytes}`);
+
         // Step 1: Transcribe audio using Deepgram
         const multer = require('multer');
         const upload = multer({ storage: multer.memoryStorage() });
@@ -460,22 +469,22 @@ async function generateAndSendTTS(ws, text, sessionId) {
     try {
         console.log(`🔊 Generating TTS for session ${sessionId}: "${text}"`);
 
-        if (!process.env.PIPER_PATH) {
-            // Ak Piper nie je dostupný, nechaj frontend použiť Web Speech API
-            console.log('🧪 Piper nie je dostupný - frontend použije Web Speech API');
-            // ai_response správa už bola poslaná, frontend ju spracuje s Web Speech API
-            return;
-        }
-
-        // Use real Piper TTS
-        console.log('🔊 Using Piper TTS');
         let audioBuffer;
-        try {
-            audioBuffer = await generatePiperTTSAudio(text);
-        } catch (error) {
-            console.error('❌ Piper TTS failed, frontend použije Web Speech API fallback:', error);
-            // Neposielame mock audio, nechaj frontend použiť Web Speech API
-            return;
+
+        if (!process.env.PIPER_PATH) {
+            // Ak Piper nie je dostupný, použiť mock TTS
+            console.log('🧪 Piper nie je dostupný - používam mock TTS');
+            audioBuffer = generateMockTTSAudio(text);
+        } else {
+            // Use real Piper TTS
+            console.log('🔊 Using Piper TTS');
+            try {
+                audioBuffer = await generatePiperTTSAudio(text);
+            } catch (error) {
+                console.error('❌ Piper TTS failed, používam mock TTS fallback:', error);
+                // Pošleme mock audio namiesto toho, aby frontend používal Web Speech API
+                audioBuffer = generateMockTTSAudio(text);
+            }
         }
 
         // Send audio as binary data
@@ -498,9 +507,9 @@ async function generateAndSendTTS(ws, text, sessionId) {
 }
 
 function generateMockTTSAudio(text) {
-    // Create a simple WAV file with silence (same as in tts.js)
+    // Create a simple WAV file with audible tone (not silence)
     const sampleRate = 22050;
-    const duration = Math.max(1, Math.min(10, text.length * 0.1)); // 0.1s per character, max 10s
+    const duration = Math.max(2, Math.min(10, text.length * 0.15)); // 0.15s per character, min 2s, max 10s
     const numSamples = Math.floor(sampleRate * duration);
     const numChannels = 1;
     const bitsPerSample = 16;
@@ -521,10 +530,10 @@ function generateMockTTSAudio(text) {
     header.write('data', 36);
     header.writeUInt32LE(numSamples * 2, 40);
 
-    // Audio data (generate simple tone instead of silence)
+    // Audio data (generate clearly audible tone)
     const audioData = Buffer.alloc(numSamples * 2);
     const frequency = 440; // A4 note
-    const amplitude = 8000; // Volume level
+    const amplitude = 16000; // Increased volume level for better audibility
 
     for (let i = 0; i < numSamples; i++) {
         // Generate sine wave
@@ -628,9 +637,9 @@ async function generatePiperTTSAudio(text) {
             reject(error);
         });
 
-        // Send text to Piper
+        // Send text to Piper with proper encoding
         try {
-            piper.stdin.write(text);
+            piper.stdin.write(text + '\n', 'utf8');
             piper.stdin.end();
         } catch (error) {
             console.error(`❌ Error writing to Piper stdin:`, error);
@@ -695,6 +704,29 @@ wss.on('connection', (ws, req) => {
             // Check if it's binary data (audio)
             if (data instanceof Buffer) {
                 console.log(`🎵 Binary audio data received: ${data.length} bytes from session ${sessionId}`);
+
+                // Check if this might be a misrouted text message
+                if (data.length < 200) {
+                    const textContent = data.toString('utf8');
+                    if (textContent.includes('ping') || textContent.includes('type')) {
+                        console.warn(`⚠️ Received small buffer that looks like text: "${textContent}"`);
+                        console.warn(`⚠️ This should be handled as text message, not binary audio`);
+                        // Try to handle as text message instead
+                        try {
+                            const parsedMessage = JSON.parse(textContent);
+                            console.log(`🔄 Redirecting misrouted message:`, parsedMessage);
+                            // Handle ping/pong
+                            if (parsedMessage.type === 'ping') {
+                                ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+                                console.log(`🏓 Pong sent to session ${sessionId}`);
+                            }
+                            return;
+                        } catch (e) {
+                            console.error(`❌ Failed to parse suspected text message: ${e.message}`);
+                        }
+                    }
+                }
+
                 await handleVoiceMessage(ws, data, sessionId);
                 return;
             }
