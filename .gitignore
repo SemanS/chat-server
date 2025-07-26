@@ -106,11 +106,15 @@ logs/
 ehthumbs.db
 Thumbs.db
 
-# SSL certificates
+# SSL certificates (except Cloudflare Origin certificates)
 ssl/
 *.crt
 *.key
 *.pem
+
+# Allow Cloudflare Origin certificates
+!origin-cert.pem
+!origin-cert.key
 
 # Docker
 .dockerignore
