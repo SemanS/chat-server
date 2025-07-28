@@ -18,8 +18,9 @@ REMOTE_DIR="${REMOTE_DIR:-/home/ubuntu/chat-server}"
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 
-# TTS konfigurácia
+# TTS konfigurácia - Piper TTS Server
 TTS_VOICE="${TTS_VOICE:-sk_SK-lili-medium}"
+PIPER_TTS_PORT="${PIPER_TTS_PORT:-5000}"
 PIPER_VOICES_URL="${PIPER_VOICES_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/sk/sk_SK/lili/medium/sk_SK-lili-medium.onnx}"
 PIPER_VOICES_JSON_URL="${PIPER_VOICES_JSON_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/sk/sk_SK/lili/medium/sk_SK-lili-medium.onnx.json}"
 
@@ -91,6 +92,7 @@ show_config() {
     echo "   SSH Key:       $SSH_KEY"
     echo "   Remote Dir:    $REMOTE_DIR"
     echo "   TTS Voice:     $TTS_VOICE"
+    echo "   TTS Server:    Piper TTS (port $PIPER_TTS_PORT)"
     echo ""
     echo -e "${CYAN}🔑 API Keys:${NC}"
     echo "   Deepgram:      ${DEEPGRAM_API_KEY:+✅ Nastavený}${DEEPGRAM_API_KEY:-❌ Nenastavený}"
@@ -227,36 +229,25 @@ EOF
     success "Systémové závislosti nainštalované"
 }
 
-# Inštalácia a konfigurácia Piper TTS
-setup_piper_tts() {
-    step "Nastavujem Piper TTS..."
+# Nastavenie Piper TTS Server
+setup_piper_tts_server() {
+    step "Nastavujem Piper TTS Server..."
 
     ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" << EOF
 set -e
 
-echo "🔊 Nastavujem Piper TTS..."
+echo "🔊 Nastavujem Piper TTS Server..."
 
-# Stiahnutie Piper binary ak neexistuje
-if [[ ! -f "/usr/local/bin/piper" ]]; then
-    echo "📥 Sťahujem Piper TTS binary..."
-    cd /tmp
-    wget -q https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz
-    tar -xzf piper_amd64.tar.gz
+cd "$REMOTE_DIR"
 
-    # Inštalácia Piper
-    sudo cp piper/piper /usr/local/bin/
-    sudo chmod +x /usr/local/bin/piper
-
-    # Cleanup
-    rm -rf piper piper_amd64.tar.gz
-
-    echo "✅ Piper binary nainštalovaný"
-fi
+# Vytvorenie adresára pre hlasové modely
+echo "📁 Vytváram adresár pre hlasové modely..."
+mkdir -p piper-data
 
 # Stiahnutie slovenského voice modelu ak neexistuje
-if [[ ! -f "$REMOTE_DIR/piper-models/$TTS_VOICE.onnx" ]]; then
+if [[ ! -f "piper-data/$TTS_VOICE.onnx" ]]; then
     echo "📥 Sťahujem slovenský voice model..."
-    cd "$REMOTE_DIR/piper-models"
+    cd piper-data
 
     # Stiahnutie ONNX modelu
     wget -q -O "$TTS_VOICE.onnx" "$PIPER_VOICES_URL"
@@ -265,22 +256,46 @@ if [[ ! -f "$REMOTE_DIR/piper-models/$TTS_VOICE.onnx" ]]; then
     wget -q -O "$TTS_VOICE.onnx.json" "$PIPER_VOICES_JSON_URL"
 
     echo "✅ Voice model $TTS_VOICE stiahnutý"
+    cd ..
 fi
 
-# Test Piper TTS
-echo "🧪 Testujem Piper TTS..."
-if echo "Test slovenského hlasu" | /usr/local/bin/piper --model "$REMOTE_DIR/piper-models/$TTS_VOICE.onnx" --output_file /tmp/test.wav; then
-    echo "✅ Piper TTS test úspešný"
-    rm -f /tmp/test.wav
-else
-    echo "❌ Piper TTS test zlyhal"
-    exit 1
-fi
+# Vytvorenie Docker Compose súboru pre Piper TTS
+echo "🐳 Vytváram Docker Compose pre Piper TTS..."
+cat > docker-compose.piper-tts.yml << 'DOCKER_EOF'
+version: '3.8'
 
-echo "✅ Piper TTS nakonfigurovaný"
+services:
+  # Oficiálny Wyoming Piper TTS server
+  piper-tts-server:
+    image: rhasspy/wyoming-piper:latest
+    container_name: piper-tts-server
+    ports:
+      - "$PIPER_TTS_PORT:5000"    # HTTP API
+      - "10200:10200"             # Wyoming protokol
+    volumes:
+      - ./piper-data:/data
+    command: >
+      --voice $TTS_VOICE
+      --http-port 5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - voice-chat-network
+
+networks:
+  voice-chat-network:
+    external: true
+DOCKER_EOF
+
+echo "✅ Piper TTS Server nakonfigurovaný"
 EOF
 
-    success "Piper TTS nakonfigurovaný"
+    success "Piper TTS Server nakonfigurovaný"
 }
 
 # Konfigurácia environment variables
@@ -324,11 +339,13 @@ ALLOWED_ORIGINS=*
 SSL_CERT_PATH=/etc/ssl/cloudflare/origin.crt
 SSL_KEY_PATH=/etc/ssl/cloudflare/origin.key
 
-# TTS Configuration
+# TTS Configuration - Remote Piper TTS Server
 TTS_VOICE=$TTS_VOICE
 TTS_CACHE_ENABLED=true
-PIPER_PATH=/usr/local/bin/piper
-PIPER_VOICES_PATH=/app/voices
+PIPER_TTS_URL=http://piper-tts-server:5000
+# Fallback local Piper (disabled by default)
+# PIPER_PATH=/usr/local/bin/piper
+# PIPER_VOICES_PATH=/app/voices
 
 # Rate Limiting
 RATE_LIMIT_WINDOW_MS=900000
@@ -353,7 +370,7 @@ EOF
     success "Environment nakonfigurovaný"
 }
 
-# Konfigurácia Docker Compose
+# Konfigurácia Docker Compose pre Piper TTS Server
 configure_docker_compose() {
     step "Konfigururjem Docker Compose..."
 
@@ -362,31 +379,35 @@ set -e
 
 cd "$REMOTE_DIR"
 
-echo "🐳 Aktualizujem docker-compose.yml..."
+echo "🐳 Aktualizujem docker-compose.yml pre Piper TTS Server..."
 
-# Pridanie volume pre Piper voices ak neexistuje
-if ! grep -q "piper-models:/app/voices" docker-compose.yml; then
-    # Pridanie volume mount pre voices
-    sed -i '/- \.\/tmp:\/app\/tmp/a\      - \.\/piper-models:\/app\/voices:ro' docker-compose.yml
+# Vytvorenie Docker network ak neexistuje
+if ! docker network ls | grep -q "voice-chat-network"; then
+    echo "🌐 Vytváram Docker network..."
+    docker network create voice-chat-network
 fi
 
-# Pridanie environment variables pre TTS
-if ! grep -q "TTS_VOICE=" docker-compose.yml; then
-    sed -i '/- USE_REDIS=\${USE_REDIS:-false}/a\      - TTS_VOICE=$TTS_VOICE\n      - PIPER_PATH=/usr/local/bin/piper\n      - PIPER_VOICES_PATH=/app/voices' docker-compose.yml
+# Pridanie PIPER_TTS_URL environment variable
+if ! grep -q "PIPER_TTS_URL" docker-compose.yml; then
+    sed -i '/- USE_REDIS=\${USE_REDIS:-false}/a\      - PIPER_TTS_URL=http://piper-tts-server:5000\n      - TTS_VOICE=$TTS_VOICE\n      - TTS_CACHE_ENABLED=true' docker-compose.yml
 fi
 
-# Pridanie volume mount pre Piper binary ak neexistuje
-if ! grep -q "/usr/local/bin/piper" docker-compose.yml; then
-    sed -i '/- \.\/piper-models:\/app\/voices:ro/a\      - \/usr\/local\/bin\/piper:\/usr\/local\/bin\/piper:ro' docker-compose.yml
+# Pridanie external network do docker-compose.yml
+if ! grep -q "voice-chat-network" docker-compose.yml; then
+    echo "" >> docker-compose.yml
+    echo "networks:" >> docker-compose.yml
+    echo "  default:" >> docker-compose.yml
+    echo "    external:" >> docker-compose.yml
+    echo "      name: voice-chat-network" >> docker-compose.yml
 fi
 
-echo "✅ Docker Compose nakonfigurovaný"
+echo "✅ Docker Compose nakonfigurovaný pre Piper TTS Server"
 EOF
 
     success "Docker Compose nakonfigurovaný"
 }
 
-# Build a spustenie služieb
+# Build a spustenie služieb s Piper TTS Server
 build_and_start_services() {
     step "Buildujem a spúšťam služby..."
 
@@ -395,35 +416,34 @@ set -e
 
 cd "$REMOTE_DIR"
 
-echo "🐳 Buildujem Docker images..."
+echo "🔊 Spúšťam Piper TTS Server..."
+docker-compose -f docker-compose.piper-tts.yml up -d piper-tts-server
+
+echo "⏳ Čakám na spustenie Piper TTS Server..."
+sleep 20
+
+# Test Piper TTS Server
+echo "🧪 Testujem Piper TTS Server..."
+for i in {1..10}; do
+    if curl -f http://localhost:$PIPER_TTS_PORT >/dev/null 2>&1; then
+        echo "✅ Piper TTS Server je dostupný"
+        break
+    fi
+    echo "⏳ Čakám na Piper TTS Server... (\$i/10)"
+    sleep 5
+done
+
+echo "🐳 Buildujem hlavnú aplikáciu..."
 docker-compose build --no-cache voice-chat-backend
 
-echo "🚀 Spúšťam služby..."
+echo "🚀 Spúšťam hlavné služby..."
 docker-compose up -d voice-chat-backend redis
 
 # Čakanie na spustenie služieb
-echo "⏳ Čakám na spustenie služieb..."
+echo "⏳ Čakám na spustenie hlavných služieb..."
 sleep 30
 
-# Inštalácia Piper TTS do kontajnera
-echo "🔊 Inštalujem Piper TTS do kontajnera..."
-docker exec -u root oracle-voice-chat-backend sh -c '
-    apk add --no-cache gcompat wget &&
-    cd /tmp &&
-    wget -q https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz &&
-    tar -xzf piper_amd64.tar.gz &&
-    cp piper/piper /usr/bin/ &&
-    cp piper/lib*.so* /usr/lib/ &&
-    chmod +x /usr/bin/piper &&
-    mkdir -p /usr/share/espeak-ng-data &&
-    cp -r piper/espeak-ng-data/* /usr/share/espeak-ng-data/ &&
-    rm -rf piper piper_amd64.tar.gz
-'
-
-# Aktualizácia PIPER_PATH v kontajneri
-docker exec oracle-voice-chat-backend sh -c 'export PIPER_PATH=/usr/bin/piper'
-
-echo "✅ Služby spustené"
+echo "✅ Všetky služby spustené"
 EOF
 
     success "Služby spustené"
@@ -471,12 +491,22 @@ else
     echo "❌ OpenAI API nedostupné"
 fi
 
-# Test Piper TTS v kontajneri
-echo "🔊 Testovanie Piper TTS..."
-if docker exec oracle-voice-chat-backend sh -c 'echo "Test slovenského hlasu" | /usr/bin/piper --model /app/voices/$TTS_VOICE.onnx --output_file /tmp/test.wav && ls -la /tmp/test.wav'; then
-    echo "✅ Piper TTS test úspešný"
+# Test Piper TTS Server
+echo "🔊 Testovanie Piper TTS Server..."
+if curl -X POST -H "Content-Type: application/json" -d "{\"text\":\"Test slovenského hlasu\", \"voice\":\"$TTS_VOICE\"}" http://localhost:$PIPER_TTS_PORT/api/tts --output /tmp/test.wav && ls -la /tmp/test.wav; then
+    echo "✅ Piper TTS Server test úspešný"
+    rm -f /tmp/test.wav
 else
-    echo "❌ Piper TTS test zlyhal"
+    echo "❌ Piper TTS Server test zlyhal"
+fi
+
+# Test TTS API v aplikácii
+echo "🔊 Testovanie TTS API v aplikácii..."
+if curl -X POST -H "Content-Type: application/json" -d "{\"text\":\"Test TTS API v aplikácii\"}" http://localhost:3000/api/tts/synthesize --output /tmp/app-test.wav && ls -la /tmp/app-test.wav; then
+    echo "✅ TTS API test úspešný"
+    rm -f /tmp/app-test.wav
+else
+    echo "❌ TTS API test zlyhal"
 fi
 
 echo "✅ Všetky testy úspešné"
@@ -546,7 +576,7 @@ main() {
     prepare_local_code
     deploy_code
     install_system_dependencies
-    setup_piper_tts
+    setup_piper_tts_server
     configure_environment
     configure_docker_compose
     build_and_start_services

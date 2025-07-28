@@ -13,7 +13,58 @@ Pokročilý Node.js backend pre voice chat aplikáciu s AI integráciou, optimal
 - 📊 **Monitoring** - Metriky a health checks
 - 🗄️ **Session Management** - Redis/in-memory sessions
 
-## 🚀 Quick Start
+## 🚀 Deployment Módy
+
+### **Produkčný Deployment**
+
+```bash
+# Štandardný deployment s potvrdením
+./deploy-universal.sh
+
+# Rýchly deployment (bez potvrdenia)
+./deploy-universal.sh quick
+
+# Deployment len kódu (bez systémových závislostí)
+./deploy-universal.sh code-only
+
+# Rollback na predchádzajúcu verziu
+./deploy-universal.sh rollback
+
+# Kompletný quick deploy s Piper TTS
+./quick-deploy.sh
+```
+
+### **Lokálny Vývoj s Piper TTS**
+
+```bash
+# Kompletné nastavenie a spustenie
+./start-local-with-piper.sh
+
+# Len nastavenie Piper TTS servera
+./setup-piper-tts-web.sh
+
+# Testovanie deployment
+./test-piper-tts-deployment.sh
+```
+
+## 🔊 Piper TTS Server
+
+Nové deployment skripty automaticky nastavujú vysokovýkonný Piper TTS server:
+
+- **10x rýchlejšie** generovanie reči
+- **Nižšia záťaž CPU** - model sa načíta raz
+- **Docker kontajner** - `rhasspy/wyoming-piper`
+- **HTTP API** na porte 5000
+- **Slovenský hlas** `sk_SK-lili-medium`
+
+### Konfigurácia
+```env
+PIPER_TTS_URL=http://piper-tts-server:5000
+TTS_VOICE=sk_SK-lili-medium
+TTS_CACHE_ENABLED=true
+```
+
+## 🛠️ Quick Start
 
 ### **Development**
 

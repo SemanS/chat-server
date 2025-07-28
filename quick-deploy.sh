@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Quick Deploy Script for Oracle Voice Chat Backend
-# Rýchly deployment script s prednastavenými hodnotami
+# Quick Deploy Script for Oracle Voice Chat Backend with Piper TTS Server
+# Rýchly deployment script s Piper TTS serverom
 
 set -euo pipefail
 
@@ -9,10 +9,11 @@ set -euo pipefail
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${GREEN}🚀 Oracle Voice Chat Backend - Quick Deploy${NC}"
-echo "=============================================="
+echo -e "${GREEN}🚀 Oracle Voice Chat Backend - Quick Deploy with Piper TTS${NC}"
+echo "=========================================================="
 
 # Kontrola, či existuje deploy.env
 if [[ -f "deploy.env" ]]; then
@@ -48,8 +49,20 @@ if [[ -z "${DEEPGRAM_API_KEY:-}" ]] || [[ -z "${OPENAI_API_KEY:-}" ]]; then
 fi
 
 echo ""
-echo -e "${GREEN}✅ Konfigurácia OK, spúšťam deployment...${NC}"
+echo -e "${GREEN}✅ Konfigurácia OK, spúšťam deployment s Piper TTS...${NC}"
 echo ""
+
+# Najprv nastavenie Piper TTS servera lokálne
+echo -e "${BLUE}🔊 Nastavujem Piper TTS server lokálne...${NC}"
+if [[ -f "./setup-piper-tts-web.sh" ]]; then
+    ./setup-piper-tts-web.sh
+    echo -e "${GREEN}✅ Piper TTS server nastavený${NC}"
+else
+    echo -e "${YELLOW}⚠️  setup-piper-tts-web.sh nenájdený, preskakujem lokálne nastavenie${NC}"
+fi
+
+echo ""
+echo -e "${BLUE}🚀 Spúšťam deployment na server...${NC}"
 
 # Spustenie universal deployment scriptu
 ./deploy-universal.sh quick

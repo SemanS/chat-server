@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # Oficiálny Wyoming Piper TTS server
+  piper-tts-wyoming:
+    image: rhasspy/wyoming-piper:latest
+    container_name: piper-tts-wyoming
+    ports:
+      - "5000:5000"    # HTTP API
+      - "10200:10200"  # Wyoming protokol
+    volumes:
+      - ./piper-data:/data
+    command: >
+      --voice sk_SK-lili-medium
+      --http-port 5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Alternatívny jednoduchý Piper TTS server
+  piper-tts-simple:
+    image: waveoffire/piper-tts-server:latest
+    container_name: piper-tts-simple
+    ports:
+      - "5001:5000"    # HTTP API na inom porte
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis pre cache (voliteľné)
+  redis-tts:
+    image: redis:7-alpine
+    container_name: redis-tts
+    ports:
+      - "6380:6379"    # Redis na inom porte
+    volumes:
+      - redis-tts-data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis-tts-data:
+    driver: local
+
+networks:
+  default:
+    name: piper-tts-network
